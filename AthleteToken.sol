@@ -1,5 +1,4 @@
-pragma solidity ^0.4.18;
-
+pragma solidity ^0.4.24;
 library SafeMath {
     function mul(uint256 a, uint256 b) internal pure returns (uint256) {
         if (a == 0) {
@@ -36,11 +35,12 @@ contract ERC721 {
     event Transfer(address indexed from, address indexed to, uint256 tokenId);
     event Approval(address indexed owner, address indexed approved, uint256 tokenId);
 }
-
 contract AthleteToken is ERC721 {
     /****  CONSTANTS ****/
     string public constant NAME = "CryptoFantasy";
     string public constant SYMBOL = "Athlete";
+    uint256 public siteFee = 5;
+    uint256 public sendFee = 2;
 
     uint256 private constant initPrice = 0.001 ether;
 
@@ -56,49 +56,20 @@ contract AthleteToken is ERC721 {
     // A mapping from owner address to count of tokens that address owns.
     // Used internally inside balanceOf() to resolve ownership count.
     mapping (address => uint256) private ownershipTokenCount;
-
-    /**
-        *** A mapping from athleteIDs to an address that has been approved to call transferFrom().
-        *** Each athlete can only have one approved address for transfer at any time.
-        *** A ZERO value means no approval is outstanding.
-     */
     mapping (uint256 => address) public athleteIndexToApproved;
-
-    // A mapping from athleteIDs to the price of the token.
-    mapping (uint256 => uint256) private athleteIndexToPrice;
-
-    // A mapping from athleteIDs to the actual fee of the token.
-    mapping (uint256 => uint256) private athleteIndexToActualFee;
-
-    // A mapping from athleteIDs to the site fee of the token.
-    mapping (uint256 => uint256) private athleteIndexToSiteFee;
-
-    // A mapping from athleteIDs to the actual wallet address of the token
-    mapping (uint256 => address) private athleteIndexToActualWalletId;
-
-    // A mapping of athleteIDs
-    mapping (uint256 => string) private athleteIndexToAthleteID;
-    // A mapping of athleteIDs to the isVerified of token
-    mapping (uint256 => bool) private athleteIndexToAthleteVerificationState;
 
     // The addresses of the accounts (or contracts) that can execute actions within each roles.
     address public ceoAddress;
     address public cooAddress;
 
-    uint256 public promoCreatedCount;
-
     /** ATHLETE DATATYPE */
     struct Athlete {
         string  athleteId;
-        address actualAddress;
-        uint256 actualFee;
-        uint256 siteFee;
         uint256 sellPrice;
-        bool    isVerified;
+        string  creatorId;
+        address creatorAddress;
     }
     Athlete[] private athletes;
-
-    mapping (uint256 => Athlete) private athleteIndexToAthlete;
 
     modifier onlyCEO() {
         require(msg.sender == ceoAddress);
@@ -112,104 +83,49 @@ contract AthleteToken is ERC721 {
         require(msg.sender == ceoAddress || msg.sender == cooAddress);
         _;
     }
-
     /** CONSTRUCTOR */
-    function AthleteToken() public {
+    constructor() public {
         ceoAddress = msg.sender;
         cooAddress = msg.sender;
     }
-
     /*** PUBLIC FUNCTIONS */
     function approve( address _to, uint256 _tokenId ) public {
         require(_owns(msg.sender, _tokenId));
         athleteIndexToApproved[_tokenId] = _to;
-        Approval(msg.sender, _to, _tokenId);
+        emit Approval(msg.sender, _to, _tokenId);
     }
-
     function balanceOf(address _owner) public view returns (uint256 balance) {
         return ownershipTokenCount[_owner];
     }
-/***********************   Updated at 2018-04-11T02:50 ***************************/
-    function createOfAthleteCard(string _athleteId, address _actualAddress, uint256 _actualFee, uint256 _siteFee, uint256 _sellPrice) public onlyCOO returns (uint256 _newAthleteId) {
-
-        address _athleteOwner = address(this);
-
-        bool _verified = true;
-        // Check sell price and origin wallet id
-        if ( _sellPrice <= 0 ) {
-            _sellPrice = initPrice;
-        }
-        if ( _actualAddress == address(0) ){
-            _actualAddress = ceoAddress;
-            _verified = false;
-        }
-
-        Athlete memory _athlete = Athlete({ athleteId: _athleteId, actualAddress: _actualAddress, actualFee: _actualFee,  siteFee: _siteFee, sellPrice: _sellPrice, isVerified: _verified });
+    function createOfAthleteCard(string _athleteId, string _creatorId) public payable returns (uint256 _newAthleteId) {
+        require( msg.sender != cooAddress && msg.sender != ceoAddress );
+        require( msg.value > 0 && msg.value >= initPrice );
+        
+        Athlete memory _athlete = Athlete({ athleteId: _athleteId, sellPrice: msg.value, creatorId: _creatorId, creatorAddress: msg.sender });
         uint256 newAthleteId = athletes.push(_athlete) - 1;
-
+        
         require(newAthleteId == uint256(uint32(newAthleteId)));
-        Birth(newAthleteId, _athleteOwner);
-
-        athleteIndexToPrice[newAthleteId] = _sellPrice;
-        athleteIndexToActualFee[newAthleteId] = _actualFee;
-        athleteIndexToSiteFee[newAthleteId] = _siteFee;
-        athleteIndexToActualWalletId[newAthleteId] = _actualAddress;
-        athleteIndexToAthleteID[newAthleteId] = _athleteId;
-        athleteIndexToAthlete[newAthleteId] = _athlete;
-        athleteIndexToAthleteVerificationState[newAthleteId] = _verified;
-
-        _transfer(address(0), _athleteOwner, newAthleteId);
-
+        emit Birth(newAthleteId, msg.sender);
+        athleteIndexToOwner[newAthleteId] = msg.sender;
+        
+        _transfer(address(0), msg.sender, newAthleteId);
+        ceoAddress.transfer(msg.value);
+        
         return newAthleteId;
-
     }
-
-    function changeOriginWalletIdForAthlete( uint256 _tokenId, address _oringinWalletId ) public onlyCOO returns( string athleteId, address actualAddress, uint256 actualFee, uint256 siteFee, uint256 sellPrice, address owner) {
-        athleteIndexToActualWalletId[_tokenId] = _oringinWalletId;
-
-        Athlete storage athlete = athletes[_tokenId];
-        athlete.actualAddress = _oringinWalletId;
-
-        athleteId     = athlete.athleteId;
-        actualAddress = athlete.actualAddress;
-        actualFee     = athlete.actualFee;
-        siteFee       = athlete.siteFee;
-        sellPrice     = priceOf(_tokenId);
-        owner         = ownerOf(_tokenId);
-    }
-
-    function changeSellPriceForAthlete( uint256 _tokenId, uint256 _newSellPrice ) public onlyCOO returns( string athleteId, address actualAddress, uint256 actualFee, uint256 siteFee, uint256 sellPrice, address owner) {
-        athleteIndexToPrice[_tokenId] = _newSellPrice;
-
+    function changeSellPriceForAthlete( uint256 _tokenId, uint256 _newSellPrice ) public returns( string athleteId ) {
+        require(ownerOf(_tokenId)==msg.sender);
         Athlete storage athlete = athletes[_tokenId];
         athlete.sellPrice = _newSellPrice;
-
         athleteId     = athlete.athleteId;
-        actualAddress = athlete.actualAddress;
-        actualFee     = athlete.actualFee;
-        siteFee       = athlete.siteFee;
-        sellPrice     = athlete.sellPrice;
-        owner         = ownerOf(_tokenId);
-    }
-    function getAthleteVerficationState(uint256 tokenId) public returns(bool state) {
-        state = athleteIndexToAthleteVerificationState[tokenId];
-    }
-/***********************   Updated at 2018-04-11T02:50 ***************************/
-
-    function createContractOfAthlete(string _athleteId, address _actualAddress, uint256 _actualFee, uint256 _siteFee, uint256 _sellPrice) public onlyCOO{
-        _createOfAthlete(address(this), _athleteId, _actualAddress, _actualFee, _siteFee, _sellPrice);
-    }
-
-    function getAthlete(uint256 _tokenId) public view returns ( string athleteId, address actualAddress, uint256 actualFee, uint256 siteFee, uint256 sellPrice, address owner) {
+    } 
+    function getAthlete(uint256 _tokenId) public view returns ( string athleteId, uint256 sellPrice, string creatorId, address creatorAddress) {
         Athlete storage athlete = athletes[_tokenId];
-        athleteId     = athlete.athleteId;
-        actualAddress = athlete.actualAddress;
-        actualFee     = athlete.actualFee;
-        siteFee       = athlete.siteFee;
-        sellPrice     = priceOf(_tokenId);
-        owner         = ownerOf(_tokenId);
+        athleteId      = athlete.athleteId;
+        sellPrice      = athlete.sellPrice;
+        creatorId      = athlete.creatorId;
+        creatorAddress = athlete.creatorAddress;
     }
-
     function implementsERC721() public pure returns (bool) {
         return true;
     }
@@ -226,45 +142,34 @@ contract AthleteToken is ERC721 {
     function purchase(uint256 _tokenId) public payable {
         address sellOwner = athleteIndexToOwner[_tokenId];
         address buyOwner = msg.sender;
-
         uint256 sellPrice = msg.value;
+        Athlete storage athlete = athletes[_tokenId];
+        address _creatorAddress = athlete.creatorAddress;
 
-        //make sure token owner is not sending to self
         require(sellOwner != buyOwner);
-        //safely check to prevent against an unexpected 0x0 default
         require(_addressNotNull(buyOwner));
-
-        //make sure sent amount is greater than or equal to the sellPrice
         require(msg.value >= sellPrice);
 
-        uint256 actualFee = uint256(SafeMath.div(SafeMath.mul(sellPrice, athleteIndexToActualFee[_tokenId]), 100)); // calculate actual fee
-        uint256 siteFee   = uint256(SafeMath.div(SafeMath.mul(sellPrice, athleteIndexToSiteFee[_tokenId]), 100));   // calculate site fee
-        uint256 payment   = uint256(SafeMath.sub(sellPrice, SafeMath.add(actualFee, siteFee)));   //payment for seller
+        uint256 _sendFee  = uint256(SafeMath.div(SafeMath.mul(sellPrice, sendFee), 100)); // calculate actual fee
+        uint256 _siteFee  = uint256(SafeMath.div(SafeMath.mul(sellPrice, siteFee), 100));   // calculate site fee
+        uint256 payment   = uint256(SafeMath.sub(sellPrice, SafeMath.add(_sendFee, _siteFee)));   //payment for seller
 
         _transfer(sellOwner, buyOwner, _tokenId);
 
         //Pay previous tokenOwner if owner is not contract
         if ( sellOwner != address(this) ) {
             sellOwner.transfer(payment); // (1-(actual_fee+site_fee))*sellPrice
+            _creatorAddress.transfer(sendFee);
+            ceoAddress.transfer(siteFee);
+            athleteIndexToOwner[_tokenId] = buyOwner;
+            emit TokenSold(_tokenId, sellPrice, sellOwner, buyOwner, athletes[_tokenId].athleteId);
         }
-
-        TokenSold(_tokenId, sellPrice, sellOwner, buyOwner, athletes[_tokenId].athleteId);
-
-        address actualWallet = athleteIndexToActualWalletId[_tokenId];
-        actualWallet.transfer(actualFee);
-
-        ceoAddress.transfer(siteFee);
-
-    }
-
-    function priceOf(uint256 _tokenId) public view returns (uint256 price) {
-        return athleteIndexToPrice[_tokenId];
     }
     function setCEO(address _newCEO) public onlyCEO {
         require(_newCEO != address(0));
         ceoAddress = _newCEO;
     }
-    function setCOO(address _newCOO) public onlyCEO {
+    function setCOO(address _newCOO) public onlyCOO {
         require(_newCOO != address(0));
         cooAddress = _newCOO;
     }
@@ -274,12 +179,11 @@ contract AthleteToken is ERC721 {
     function takeOwnership(uint256 _tokenId) public {
         address newOwner = msg.sender;
         address oldOwner = athleteIndexToOwner[_tokenId];
-
+        
         require(_addressNotNull(newOwner));
         require(_approved(newOwner, _tokenId));
         _transfer(oldOwner, newOwner, _tokenId);
     }
-
     function tokenOfOwner(address _owner) public view returns(uint256[] ownerTokens) {
         uint256 tokenCount = balanceOf(_owner);
         if ( tokenCount == 0 ) {
@@ -300,18 +204,15 @@ contract AthleteToken is ERC721 {
             return result;
         }
     }
-
     function totalSupply() public view returns (uint256 total) {
         return athletes.length;
     }
-
     function transfer( address _to, uint256 _tokenId ) public {
         require(_owns(msg.sender, _tokenId));
         require(_addressNotNull(_to));
 
         _transfer(msg.sender, _to, _tokenId);
     }
-
     function transferFrom( address _from, address _to, uint256 _tokenId ) public {
         require(_owns(_from, _tokenId));
         require(_approved(_to, _tokenId));
@@ -319,7 +220,6 @@ contract AthleteToken is ERC721 {
 
         _transfer(_from, _to, _tokenId);
     }
-
     /** PRIVATE FUNCTIONS */
     function _addressNotNull(address _to) private pure returns (bool) {
         return _to != address(0);
@@ -327,47 +227,15 @@ contract AthleteToken is ERC721 {
     function _approved(address _to, uint256 _tokenId) private view returns (bool) {
         return athleteIndexToApproved[_tokenId] == _to;
     }
-
-    //TODO -----------------------------------------------------------------------------------------------------------------------------------------
-    function _createOfAthlete(address _athleteOwner, string _athleteId, address _actualAddress, uint256 _actualFee, uint256 _siteFee, uint256 _sellPrice) private {
-
-        bool _verified = true;
-        // Check sell price and origin wallet id
-        if ( _sellPrice <= 0 ) {
-            _sellPrice = initPrice;
-        }
-        if ( _actualAddress == address(0) ){
-            _actualAddress = ceoAddress;
-            _verified = false;
-        }
-
-        Athlete memory _athlete = Athlete({ athleteId: _athleteId, actualAddress: _actualAddress, actualFee: _actualFee,  siteFee: _siteFee, sellPrice: _sellPrice, isVerified: _verified });
-        uint256 newAthleteId = athletes.push(_athlete) - 1;
-
-        require(newAthleteId == uint256(uint32(newAthleteId)));
-        Birth(newAthleteId, _athleteOwner);
-
-        athleteIndexToPrice[newAthleteId] = _sellPrice;
-        athleteIndexToActualFee[newAthleteId] = _actualFee;
-        athleteIndexToSiteFee[newAthleteId] = _siteFee;
-        athleteIndexToActualWalletId[newAthleteId] = _actualAddress;
-        athleteIndexToAthleteID[newAthleteId] = _athleteId;
-        athleteIndexToAthlete[newAthleteId] = _athlete;
-        athleteIndexToAthleteVerificationState[newAthleteId] = _verified;
-
-        _transfer(address(0), _athleteOwner, newAthleteId);
-
-    }
-
     function _owns(address claimant, uint256 _tokenId) private view returns (bool) {
         return claimant == athleteIndexToOwner[_tokenId];
     }
     function _payout(address _to) private {
         if (_to == address(0)) {
-            ceoAddress.transfer(this.balance);
+            ceoAddress.transfer(address(this).balance);
         }
         else {
-            _to.transfer(this.balance);
+            _to.transfer(address(this).balance);
         }
     }
     function _transfer(address _from, address _to, uint256 _tokenId) private {
@@ -377,7 +245,6 @@ contract AthleteToken is ERC721 {
             ownershipTokenCount[_from]--;
             delete athleteIndexToApproved[_tokenId];
         }
-        Transfer(_from, _to, _tokenId);
+        emit Transfer(_from, _to, _tokenId);
     }
-
 }
